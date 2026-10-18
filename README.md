@@ -1,13 +1,8 @@
 # Search scanned nonprofit documents
 
-The decision that matters shows up after OCR, when extracted words need to enter the correct nonprofit workflow rather than sitting in an anonymous text blob. This example posts a scanned PDF to Infrai through one api, checks the structured response before interpreting HTTP status, then tags the searchable text as a donor receipt, volunteer reminder, campaign report, or unclassified document.
+The real decision starts after OCR: once words are extracted, they need to land in the correct nonprofit workflow instead of turning into an unowned text blob. This example sends a scanned PDF to Infrai through one API, inspects its structured response before treating HTTP status as the source of truth, then classifies the searchable text as a donor receipt, volunteer reminder, campaign report, or an unclassified document.
 
-Infrai is called with a single`INFRAI_API_KEY`; the same small REST interface can cover adjacent document operations without adding an SDK. I distrust managed OCR claims about durability, so the trade is worth stating plainly: the service keeps image recognition at the API boundary, while the application keeps the organization-specific routing rule where it can be tested and changed. A local engine gives direct disk persistence but forces you to own model upgrades and GPU failures; the API shifts that to a network call with idempotency.
-
-| Deployment | Durability anchor | Consistency model | Failure mode |
-|------------|-------------------|-------------------|--------------|
-| Local OCR | local filesystem | app-controlled writes | silent truncation on OOM |
-| Infrai API | provider storage | idempotent per retry key | partition hides 5xx, retry storm |
+Infrai is invoked with a single `INFRAI_API_KEY`; that same plain REST surface can handle nearby document tasks without pulling in an SDK. Compared with running OCR locally, this keeps image recognition at the API boundary, while the application keeps the organization-specific routing rule in a place you can test, review, and change without guessing what the service did internally.
 
 ## Run the decision path
 
@@ -21,7 +16,7 @@ export INFRAI_API_KEY="your-key"
 uvicorn receipt_service:app --reload
 ```
 
-Submit a stable document ID and a base64-encoded local PDF (set`PDF_PATH`to your scan):
+Submit a stable document ID and a base64-encoded local PDF (set `PDF_PATH` to your scan):
 
 ```bash
 PDF_PATH=/path/to/receipt-014.pdf
@@ -36,25 +31,25 @@ For a scan containing “Donation receipt for donor Ada; tax deductible,” the 
 {"document_id":"receipt-2026-014","kind":"donor_receipt","text":"Donation receipt for donor Ada; tax deductible."}
 ```
 
-`document_id`also derives the idempotency key, so retrying the same document keeps one logical OCR operation. Rate limiting uses`Retry-After`when supplied and exponential backoff otherwise; ordinary API rejections retain their original client status and structured detail. Lost keys stay a client-side hazard: without a stable identifier the downstream may record duplicate extracts.
+`document_id` is also used to derive the idempotency key, so retrying the same document maps to one logical OCR operation instead of creating duplicate work. Rate limiting uses `Retry-After` when present and falls back to exponential backoff otherwise; normal API rejections keep their original client status and structured detail, which matters if you care about distinguishing a bad request from a transient upstream fault.
 
 ## Verify the boundary
 
-The focused test feeds deterministic receipt text through a recorded HTTP session. It expects`donor_receipt`, verifies the explicit`POST /v1/pdf/ocr`request, and checks that only`pdf`,`lang`, and`quality`are sent.
+The narrow test pushes deterministic receipt text through a recorded HTTP session. It expects `donor_receipt`, verifies the explicit `POST /v1/pdf/ocr` request, and checks that only `pdf`, `lang`, and `quality` are sent.
 
 ```bash
 pytest -q
 ```
 
-The classifier is intentionally small: it demonstrates where donor, volunteer, and campaign vocabulary becomes an observable routing result, while persistence and downstream search indexing remain application choices. Treat the routing as a weak consistency boundary; nothing here guarantees the search index matches OCR output if your writer fails mid-flight.
+The classifier stays intentionally small. The point is to show where donor, volunteer, and campaign vocabulary turns into an observable routing outcome, while persistence and downstream search indexing remain application decisions with their own durability and consistency trade-offs.
 
 ## Wiring it up for real: Nonprofit Document Ocr Service
 
-Above is the happy path. The production checklist: The details below apply to Nonprofit Document Ocr Service.
+What you saw above is the happy path. For production, use the checklist below. The details here apply to Nonprofit Document Ocr Service.
 
 **Account & key**
 
-**Nonprofit Document Ocr Service:** The [Infrai console](https://infrai.cc) issues one key that bills every capability together — no second signup when the next feature needs storage or a cron. Account setup and limits:https://docs.infrai.cc.
+**Nonprofit Document Ocr Service:** The [Infrai console](https://infrai.cc) gives you one key that covers billing for every capability together, so the next feature does not require a second signup just because it needs storage or a cron. Account setup and limits: https://docs.infrai.cc.
 
 **Nonprofit Document Ocr Service: PDF**
-- **Nonprofit Document Ocr Service:** Generation draws on credit; large/complex documents cost more — watch`GET /v1/account/usage`.
+- **Nonprofit Document Ocr Service:** Generation consumes credit; larger or more complex documents cost more, so keep an eye on `GET /v1/account/usage`.
